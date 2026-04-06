@@ -1,0 +1,46 @@
+# openenv.yaml
+name: ml-debugger-env
+version: "1.0.0"
+description: >
+  An RL environment where an AI agent debugs broken ML training pipelines.
+  Three tasks of increasing difficulty: label flip, multi-bug diagnosis,
+  and silent distribution shift.
+
+entry_point:
+  type: http
+  port: 7860
+
+endpoints:
+  reset:
+    method: POST
+    path: /reset
+  step:
+    method: POST
+    path: /step
+  state:
+    method: GET
+    path: /state
+
+tasks:
+  - id: easy
+    description: "Single bug fix — 30% label flip in training data"
+    max_steps: 15
+    reward_range: [-0.2, 0.5]
+
+  - id: medium
+    description: "Multi-step diagnosis — 3 simultaneous bugs"
+    max_steps: 15
+    reward_range: [-0.2, 0.5]
+
+  - id: hard
+    description: "Silent distribution shift — train/test preprocessing mismatch"
+    max_steps: 15
+    reward_range: [-0.2, 0.5]
+
+metadata:
+  domain: machine_learning
+  difficulty_levels: [easy, medium, hard]
+  deterministic: true
+  seed: 42
+  framework: sklearn
+  python_version: "3.11"

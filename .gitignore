@@ -1,0 +1,125 @@
+# =========================
+
+# Python
+
+# =========================
+
+**pycache**/
+*.py[cod]
+*$py.class
+
+# Byte-compiled / optimized / DLL files
+
+*.so
+*.pyd
+*.dll
+
+# =========================
+
+# Virtual Environment
+
+# =========================
+
+.venv/
+venv/
+env/
+ENV/
+
+# =========================
+
+# Environment Variables / Secrets
+
+# =========================
+
+.env
+.env.*
+*.env
+
+# HF / API tokens (important!)
+
+*.token
+hf_token.txt
+
+# =========================
+
+# Logs
+
+# =========================
+
+*.log
+logs/
+*.out
+
+# =========================
+
+# OS Files
+
+# =========================
+
+.DS_Store
+Thumbs.db
+
+# =========================
+
+# IDE / Editor
+
+# =========================
+
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# =========================
+
+# Jupyter / Temp
+
+# =========================
+
+.ipynb_checkpoints/
+
+# =========================
+
+# Build / Distribution
+
+# =========================
+
+build/
+dist/
+*.egg-info/
+
+# =========================
+
+# Docker
+
+# =========================
+
+*.tar
+
+# =========================
+
+# Testing / Coverage
+
+# =========================
+
+.coverage
+htmlcov/
+.pytest_cache/
+
+# =========================
+
+# Hugging Face Space (optional cache)
+
+# =========================
+
+.cache/
+
+# =========================
+
+# Misc
+
+# =========================
+
+*.bak
+*.tmp
+assets/

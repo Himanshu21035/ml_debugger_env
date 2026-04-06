@@ -1,0 +1,18 @@
+# requirements.txt
+
+# API server
+fastapi==0.115.12
+uvicorn[standard]==0.34.0
+
+# ML core — CPU only, no GPU needed
+scikit-learn==1.6.1
+numpy==1.26.4
+
+# OpenEnv spec compliance
+openenv-core>=0.1.0
+
+# OpenAI client — used by inference.py
+openai>=1.0.0
+
+# Data validation (Pydantic v2 ships with FastAPI)
+pydantic>=2.0.0

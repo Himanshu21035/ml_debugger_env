@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "ml-debugger-env"
+version = "1.0.0"
+description = "OpenEnv RL environment for ML pipeline debugging"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.12",
+    "uvicorn[standard]==0.34.0",
+    "scikit-learn==1.6.1",
+    "numpy==1.26.4",
+    "openenv-core>=0.1.0",
+    "openai>=1.0.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "requests"]
+
+# FIX: entry point must be module:function format pointing to main()
+[project.scripts]
+server = "server.app:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tasks*", "data*", "server*"]
+
+[tool.openenv]
+entry_point = "server.app:main"
+port = 7860
