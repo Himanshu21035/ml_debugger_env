@@ -289,3 +289,37 @@ def get_baseline_scores():
         "task_medium": {"min": 0.10, "max": 0.25, "note": "imbalance + bad LR kills F1"},
         "task_hard":   {"min": 0.00, "max": 0.10, "note": "model trains well, test fails silently"},
     }
+def generate_distribution_shift_data(n_train=500, n_test=200, n_features=10, seed=42):
+    rng = np.random.RandomState(seed)
+
+    # Raw train: mean=5, std=2 (intentionally NOT randn so stats are non-trivial)
+    X_train_raw = rng.randn(n_train, n_features) * 2 + 5
+    train_mean  = X_train_raw.mean(axis=0)   # ≈ 5
+    train_std   = X_train_raw.std(axis=0) + 1e-8  # ≈ 2
+
+    # Normalized train (what model is trained on)
+    X_train = (X_train_raw - train_mean) / train_std   # mean≈0, std≈1
+
+    # Labels on normalized features
+    y_train = ((X_train[:, 0] + X_train[:, 1]) > 0).astype(np.float32)
+
+    # Test raw: DIFFERENT mean (=15), SAME std (=2) → covariate shift
+    # Model sees un-normalized test → features look wrong → bad accuracy
+    X_test_raw    = rng.randn(n_test, n_features) * 2 + 15
+
+    # Consistent labels (normalize first, apply same boundary)
+    X_test_scaled = (X_test_raw - train_mean) / train_std
+    y_test        = ((X_test_scaled[:, 0] + X_test_scaled[:, 1]) > 0).astype(np.float32)
+
+    # Ground-truth fix: normalize test with train stats → std≈1, mean≈5
+    X_test_normalized = (X_test_raw - train_mean) / train_std
+
+    return {
+        "X_train":           X_train.astype(np.float32),
+        "y_train":           y_train,
+        "X_test_raw":        X_test_raw.astype(np.float32),   # THE BUG
+        "X_test_normalized": X_test_normalized.astype(np.float32),
+        "y_test":            y_test,
+        "train_mean":        train_mean.astype(np.float32),   # ≈ 5
+        "train_std":         train_std.astype(np.float32),    # ≈ 2
+    }

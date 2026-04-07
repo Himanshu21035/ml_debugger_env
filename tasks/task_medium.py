@@ -210,6 +210,7 @@ class MediumTask:
                 # FIX: transform X_train_CLEAN, not X_train_current
                 # Scaler was fitted on clean data — applying it to buggy data is wrong
                 self.X_train_current = self._scaler.transform(self.X_train_clean)
+                self.X_test = self._scaler.transform(self.X_test)
                 reward = 0.2
                 new_mean = round(float(self.X_train_current.mean()), 4)
                 new_std  = round(float(self.X_train_current.std()), 4)
