@@ -289,10 +289,10 @@ Actions: inspect → inspect → inspect → fix_norm → retrain
 ## 🖥️ Execution Logs
 
 ### Agent Run
-![Agent Output](assets/results.png)
+![Agent Output](https://github.com/user-attachments/assets/abf49afb-2631-4197-8fcd-2c7128f1de8e)
 
 ### OpenEnv Validation (3/3 Passed)
-![Validator](assets/validator.png)
+![Validator](https://github.com/user-attachments/assets/1c5860ce-473d-47a0-86c9-07d746a3b8de)
 
 ---
 
