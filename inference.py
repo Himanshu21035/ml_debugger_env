@@ -3,7 +3,7 @@
 # Mandatory name, must be in project root.
 #
 # Environment variables:
-#   HF_TOKEN      — API key (REQUIRED)
+#   API_KEY      — API key (REQUIRED)
 #   API_BASE_URL  — LLM endpoint (default: HuggingFace router)
 #   MODEL_NAME    — model to use (default: Qwen/Qwen2.5-72B-Instruct)
 #   ENV_URL       — server URL   (default: http://localhost:7860)
@@ -24,13 +24,13 @@ from openai import OpenAI
 # FIX 2: real HuggingFace inference router endpoint + model
 API_BASE_URL = os.getenv(
     "API_BASE_URL",
-    "https://api-inference.huggingface.co/v1"
+    "https://router.huggingface.co/v1"
 )
 MODEL_NAME = os.getenv(
     "MODEL_NAME",
     "Qwen/Qwen2.5-72B-Instruct"
 )
-HF_TOKEN         = os.getenv("HF_TOKEN")
+API_KEY         = os.getenv("API_KEY") or os.getenv("HF_TOKEN") 
 ENV_URL          = os.getenv("ENV_URL", "http://localhost:7860").rstrip("/")
 
 BENCHMARK        = "ml-debugger-env"
@@ -333,15 +333,15 @@ def run_episode(client: OpenAI, task_id: str) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    if not HF_TOKEN:
+    if not API_KEY:
         print(
-            "[ERROR] HF_TOKEN not set. Export it: export HF_TOKEN=hf_xxxx",
+            "[ERROR] API_KEY not set. Export it: export API_KEY=hf_xxxx",
             flush=True,
         )
         sys.exit(1)
 
     # FIX 1: api_key=HF_TOKEN not HF_TOKEN=HF_TOKEN
-    client = OpenAI(base_url=API_BASE_URL, api_key=HF_TOKEN)
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
     for task_id in ["easy", "medium", "hard"]:
         print(f"\n{'='*60}", flush=True)
