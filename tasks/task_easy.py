@@ -59,7 +59,7 @@ class EasyTask:
         self.retrained_after_fix = False
         self.last_inspected = set()
         self.actions_taken = []
-        self.last_3_rewards = []     # for early termination check
+        # self.last_3_rewards = []     # for early termination check
 
         print(f"[ENV] Task EASY reset. Bug injected: label_flip (30%)")
 
@@ -93,9 +93,9 @@ class EasyTask:
             self.last_3_rewards.pop(0)
 
         # Early termination: 3 consecutive useless/bad actions
-        if self._stuck_detected():
-            self.done = True
-            result_msg += " [No progress detected in last 3 steps — episode ending early.]"
+        # if self._stuck_detected():
+        #     self.done = True
+        #     result_msg += " [No progress detected in last 3 steps — episode ending early.]"
 
         # Max steps
         if self.step_count >= self.MAX_STEPS:
@@ -246,16 +246,14 @@ class EasyTask:
     # ──────────────────────────────────────────────────────────────────────────
 
     def grade(self):
-        """
-        Normalised relative to a fixed buggy baseline (0.55 = typical accuracy
-        with 30% label noise) rather than pure random (0.5).
-        This makes the scale fair for logistic regression on this dataset.
-        Score of 1.0 = 90%+ accuracy. Score of 0.0 = 55% or below.
-        """
+    # Must have actually fixed labels AND retrained
+        if not (self.label_fix_applied and self.retrained_after_fix):
+            return 0.0
+
         y_pred = self.model.predict(self.X_test)
         test_acc = accuracy_score(self.y_test, y_pred)
-        BUGGY_BASELINE = 0.55   # typical acc with 30% label noise
-        TARGET_ACC     = 0.90   # considered perfect for this task
+        BUGGY_BASELINE = 0.55
+        TARGET_ACC     = 0.90
         score = (test_acc - BUGGY_BASELINE) / (TARGET_ACC - BUGGY_BASELINE)
         return round(min(max(score, 0.0), 1.0), 4)
 
@@ -309,8 +307,8 @@ class EasyTask:
             return 0.05
         return 0.0
 
-    def _stuck_detected(self):
-        """True if last 3 rewards were all negative — agent is going in circles."""
-        if len(self.last_3_rewards) < 3:
-            return False
-        return all(r < 0 for r in self.last_3_rewards)
+    # def _stuck_detected(self):
+    #     """True if last 3 rewards were all negative — agent is going in circles."""
+    #     if len(self.last_3_rewards) < 3:
+    #         return False
+    #     return all(r < 0 for r in self.last_3_rewards)

@@ -311,7 +311,12 @@ def run_episode(client: OpenAI, task_id: str) -> None:
 
             action = get_llm_action(client, step, obs, history, used_actions)
             rule_override = choose_action_rule_based(obs, step, used_actions, current_grade)
-
+            task_id = obs.get("task_id", "easy")  
+            easy_incomplete = (                          # ← ADD BLOCK 1
+                task_id == "easy" and
+                action["action_type"] not in ["fix_labels", "retrain", "submit_diagnosis"] and
+                "fix_labels" not in used_actions
+            )
             # ── Override logic ────────────────────────────────────────────
             REPEATABLE_ACTIONS = {"retrain", "inspect_data", "inspect_metrics", "inspect_config"}
 
@@ -327,11 +332,17 @@ def run_episode(client: OpenAI, task_id: str) -> None:
                     "fix_class_balance", "fix_normalization", "fix_learning_rate"
                 ]) or fixes_after_retrain)
             )
-
+            hard_needs_inspect = (                       # ← ADD BLOCK 2
+                task_id == "hard" and
+                action["action_type"] == "submit_diagnosis" and
+                not ("inspect_metrics" in used_actions and "inspect_data" in used_actions)
+            )
             if (
                 (action["action_type"] in used_actions
                  and action["action_type"] not in REPEATABLE_ACTIONS)
                 or medium_incomplete
+                or hard_needs_inspect
+                or easy_incomplete
             ) and rule_override:
                 action = rule_override
                 print(f"[DEBUG] Step {step}: Rule override → {action['action_type']}", flush=True)
