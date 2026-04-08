@@ -26,7 +26,7 @@ class TinyNet(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(input_dim, 64),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            # nn.Dropout(0.2),  # Dropout can add noise to training, which may hinder debugging clarity
             nn.Linear(64, 32),
             nn.ReLU(),
             nn.Linear(32, 1),
@@ -111,6 +111,9 @@ class TaskHard:
         self.input_dim   = self.X_train.shape[1]
 
         # FIX 4: agent must retrain AFTER fixing preprocessing to get credit
+        self._inspected_metrics  = False  # must inspect metrics before diagnosis counts
+        self._inspected_data     = False  # must inspect data before diagnosis counts
+        self._step_num            = 0
         self.shift_detected      = False
         self.preprocessing_fixed = False
         self.retrained           = False
@@ -154,6 +157,7 @@ class TaskHard:
     # ── Actions ───────────────────────────────────────────────────────────────
 
     def inspect_data(self, **_):
+        self._inspected_data = True
         train_mean = self.X_train.mean(axis=0)[:4]
         test_mean  = self.X_test_raw.mean(axis=0)[:4]
         diff       = float(np.abs(train_mean - test_mean).mean())
@@ -166,6 +170,7 @@ class TaskHard:
 
     def inspect_metrics(self, **_):
         gap = self.train_acc - self.test_acc_raw
+        self._inspected_metrics = True
         flag = "⚠ Large gap — preprocessing mismatch?" if gap > 0.2 else "Gap acceptable."
         return (
             f"Train acc: {self.train_acc:.3f} | "
@@ -180,19 +185,27 @@ class TaskHard:
             f"test set may not be normalized."
         ), +0.1
 
-    def submit_diagnosis(self, parameter: str = "", reasoning: str = "", **_):
-        """
-        FIX 5: Detection tied to REASONING content, not just calling the action.
-        Agent must include 'distribution', 'shift', or 'normalization' in its reasoning.
-        """
+    def submit_diagnosis(self, parameter="", reasoning="", **_):
         text = ((parameter or "") + " " + (reasoning or "")).lower()
-        if any(kw in text for kw in ["distribution", "shift", "normalization", "preprocessing"]):
+        
+        # Require BOTH "distribution/shift" AND "normalization/preprocessing"
+        # Generic reasoning like "applying fix" won't trigger this
+        has_shift = (
+                "distribution shift" in text or
+                ("train" in text and "test" in text) or
+                "shift" in text
+            )
+        has_fix     = any(kw in text for kw in ["normalization", "preprocessing", "normalize"])
+        
+        # Also require inspect_data was called first
+        if not (self._inspected_data and self._inspected_metrics):
+            return "⚠ You must inspect data before submitting diagnosis.", -0.1
+        
+        if has_shift and has_fix:
             self.shift_detected = True
-            return "✓ Correct: distribution shift detected. Train normalized, test raw.", +0.3
-        return (
-            "✗ Diagnosis incorrect. Hint: compare train vs test feature statistics. "
-            "Think about preprocessing differences."
-        ), -0.1
+            return "✓ Correct: distribution shift detected.", +0.3
+        
+        return "✗ Diagnosis too vague. Identify the specific mismatch.", -0.1
 
     def fix_normalization(self, **_):
         """Apply train mean/std to test set."""
@@ -235,19 +248,17 @@ class TaskHard:
     # ── Grader ────────────────────────────────────────────────────────────────
 
     def grade(self) -> float:
-        """
-        0.3 — shift correctly diagnosed via submit_diagnosis with reasoning
-        0.4 — fix_normalization applied AND model retrained
-        0.3 — test accuracy >= 0.75 AFTER fix+retrain (not before)
-        """
         score = 0.0
-        if self.shift_detected:
+        
+        # Detection only counts if agent actually inspected first
+        if self.shift_detected and self._inspected_data:
             score += 0.3
+        
         if self.preprocessing_fixed and self.retrained:
             score += 0.4
-            # Only check accuracy AFTER the fix has been applied
             if self.test_acc_after_fix is not None and self.test_acc_after_fix >= 0.75:
                 score += 0.3
+        
         return round(score, 3)
 
     # ── Helper ────────────────────────────────────────────────────────────────
@@ -277,7 +288,9 @@ class TaskHard:
         parameter = getattr(action, "parameter",   None) or ""
         reasoning = getattr(action, "reasoning",   None) or ""
         self._step_num = getattr(self, "_step_num", 0) + 1
-
+        if self._step_num > 15:                           
+            return self._obs(self._step_num,              
+                "Max steps reached."), 0.0, True, self._info()  
         if atype in self._WRONG:
             result = f"'{atype}' not relevant here. Focus on preprocessing."
             return self._obs(self._step_num, result), -0.2, False, self._info()

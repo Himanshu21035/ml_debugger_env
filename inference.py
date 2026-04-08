@@ -16,13 +16,15 @@ from typing import List, Optional, Set
 
 import requests
 from openai import OpenAI
+import time
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
 # FIX 2: real HuggingFace inference router endpoint + model
-API_BASE_URL = os.getenv(
+API_BASE_URL = os.environ.get(
     "API_BASE_URL",
     "https://router.huggingface.co/v1"
 )
@@ -30,7 +32,7 @@ MODEL_NAME = os.getenv(
     "MODEL_NAME",
     "Qwen/Qwen2.5-72B-Instruct"
 )
-API_KEY         = os.getenv("API_KEY") or os.getenv("HF_TOKEN") 
+API_KEY         = os.environ.get("API_KEY") or os.environ.get("HF_TOKEN")
 ENV_URL          = os.getenv("ENV_URL", "http://localhost:7860").rstrip("/")
 
 BENCHMARK        = "ml-debugger-env"
@@ -70,12 +72,19 @@ def log_end(success: bool, steps: int, score: float,
 # ENVIRONMENT HTTP CLIENT
 # ══════════════════════════════════════════════════════════════════════════════
 
-def env_reset(task_id: str) -> dict:
-    r = requests.post(f"{ENV_URL}/reset",
-                      json={"task_id": task_id}, timeout=60)
-    r.raise_for_status()
-    return r.json()
-
+def env_reset(task_id: str, retries: int = 3) -> dict:
+    for attempt in range(retries):
+        try:
+            r = requests.post(f"{ENV_URL}/reset",
+                              json={"task_id": task_id}, timeout=60)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            if attempt < retries - 1:
+                print(f"[DEBUG] Reset failed (attempt {attempt+1}), retrying...", flush=True)
+                time.sleep(3)
+            else:
+                raise
 def env_step(action_type: str,
              parameter: Optional[str] = None,
              reasoning: Optional[str] = None) -> dict:
@@ -254,6 +263,31 @@ def get_llm_action(client: OpenAI, step: int,
 # ══════════════════════════════════════════════════════════════════════════════
 # EPISODE RUNNER
 # ══════════════════════════════════════════════════════════════════════════════
+def sanitize_action(action: dict) -> dict:
+    allowed = {
+        "inspect_data", "inspect_metrics", "inspect_config",
+        "fix_labels", "fix_normalization", "fix_learning_rate",
+        "fix_architecture", "fix_loss_function", "fix_class_balance",
+        "retrain", "submit_diagnosis"
+    }
+    if action.get("action_type") not in allowed:
+        action["action_type"] = "inspect_data"
+
+    if action.get("action_type") == "fix_learning_rate":
+        try:
+            # Force to float first (handles numeric or string), then back to string
+            val = float(action.get("parameter") or "0.01")
+            # Clamp to a safe range
+            val = max(0.0001, min(val, 0.1))
+            action["parameter"] = str(round(val, 6))
+        except (TypeError, ValueError):
+            action["parameter"] = "0.01"
+
+    # Ensure parameter is always a string or None — never a raw number
+    if action.get("parameter") is not None:
+        action["parameter"] = str(action["parameter"])
+
+    return action
 
 def run_episode(client: OpenAI, task_id: str) -> None:
     rewards:      List[float] = []
@@ -262,28 +296,50 @@ def run_episode(client: OpenAI, task_id: str) -> None:
     steps_taken:  int         = 0
     score:        float       = 0.0
     success:      bool        = False
+    last_retrain_step = 0        # ← ADD HERE (top of function)
 
     log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
 
     try:
         obs           = env_reset(task_id)
         total_reward  = 0.0
-        current_grade = 0.0   # FIX 4: track grade from result, no extra HTTP
+        current_grade = 0.0
 
         for step in range(1, MAX_STEPS + 1):
             if obs.get("done"):
                 break
 
-            # Hybrid decision
-            action = choose_action_rule_based(
-                obs, step, used_actions, current_grade
-            )
-            if action is None:
-                action = get_llm_action(client, step, obs, history, used_actions)
-                print(f"[DEBUG] Step {step}: LLM → {action['action_type']}", flush=True)
-            else:
-                print(f"[DEBUG] Step {step}: Rule → {action['action_type']}", flush=True)
+            action = get_llm_action(client, step, obs, history, used_actions)
+            rule_override = choose_action_rule_based(obs, step, used_actions, current_grade)
 
+            # ── Override logic ────────────────────────────────────────────
+            REPEATABLE_ACTIONS = {"retrain", "inspect_data", "inspect_metrics", "inspect_config"}
+
+            fixes_after_retrain = (
+                any(f in used_actions for f in
+                    ["fix_class_balance", "fix_normalization", "fix_learning_rate"])
+                and last_retrain_step < step - 1
+            )
+            medium_incomplete = (
+                task_id == "medium" and
+                action["action_type"] == "submit_diagnosis" and
+                (not all(f in used_actions for f in [
+                    "fix_class_balance", "fix_normalization", "fix_learning_rate"
+                ]) or fixes_after_retrain)
+            )
+
+            if (
+                (action["action_type"] in used_actions
+                 and action["action_type"] not in REPEATABLE_ACTIONS)
+                or medium_incomplete
+            ) and rule_override:
+                action = rule_override
+                print(f"[DEBUG] Step {step}: Rule override → {action['action_type']}", flush=True)
+            else:
+                print(f"[DEBUG] Step {step}: LLM → {action['action_type']}", flush=True)
+            # ─────────────────────────────────────────────────────────────
+
+            action = sanitize_action(action)
             action_type = action.get("action_type", "inspect_data")
             parameter   = action.get("parameter")
             reasoning   = action.get("reasoning")
@@ -294,10 +350,11 @@ def run_episode(client: OpenAI, task_id: str) -> None:
             done         = bool(result["done"])
             total_reward += reward
 
-            # FIX 4: pull grade from result info, no extra HTTP call
-            current_grade = float(
-                result.get("info", {}).get("grade", 0.0)
-            )
+            if action_type == "retrain":      # ← ADD HERE (after env_step)
+                last_retrain_step = step
+
+            current_grade = float(result.get("info", {}).get("grade", 0.0))
+            
 
             rewards.append(reward)
             steps_taken = step

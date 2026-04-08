@@ -13,11 +13,13 @@
 # - normalization fix uses StandardScaler (not binary swap)
 # - LR effect amplified via SGDClassifier fallback range
 
+from xml.parsers.expat import model
+
 import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score, f1_score, log_loss
-
+from sklearn.utils import resample
 from data.generators import generate_medium_task_data, get_data_summary
 
 
@@ -34,6 +36,14 @@ REASONING_KEYWORDS = {
     "fix_learning_rate":  ["learning rate", "lr", "diverge", "unstable", "high", "converge"],
 }
 
+
+def balance_data(X, y):
+    X0, X1 = X[y == 0], X[y == 1]
+    if len(X0) > len(X1):
+        X1 = resample(X1, replace=True, n_samples=len(X0), random_state=42)
+    else:
+        X0 = resample(X0, replace=True, n_samples=len(X1), random_state=42)
+    return np.vstack([X0, X1]), np.array([0]*len(X0) + [1]*len(X1))
 
 class MediumTask:
 
@@ -56,6 +66,7 @@ class MediumTask:
         ) = generate_medium_task_data()
 
         # Live state — agent's fixes mutate these
+        self._inspected_data = False  # must inspect data before diagnosis counts
         self.X_train_current = self.X_train_buggy.copy()
         self.pipeline_state  = self.config_buggy.copy()
 
@@ -143,6 +154,7 @@ class MediumTask:
         if at == "inspect_data":
             if not self.revealed["data"]:
                 self.revealed["data"] = True
+                self._inspected_data = True
                 reward = 0.1
                 unique, counts = np.unique(self.y_train, return_counts=True)
                 # FIX: toned down — no longer says "WARNING: severe class imbalance"
@@ -209,7 +221,7 @@ class MediumTask:
                 self.bugs_fixed["normalization"] = True
                 # FIX: transform X_train_CLEAN, not X_train_current
                 # Scaler was fitted on clean data — applying it to buggy data is wrong
-                self.X_train_current = self._scaler.transform(self.X_train_clean)
+                self.X_train_current = self._scaler.transform(self.X_train_current)
                 self.X_test = self._scaler.transform(self.X_test)
                 reward = 0.2
                 new_mean = round(float(self.X_train_current.mean()), 4)
@@ -305,21 +317,17 @@ class MediumTask:
     # ──────────────────────────────────────────────────────────────────────────
 
     def grade(self):
-        """
-        FIX: use F1 score not raw accuracy.
-        Raw accuracy rewards majority-class prediction (90% on imbalanced data).
-        F1 catches class imbalance — a model predicting all-majority gets F1=0.
-        
-        score = (bugs_fixed/3) * 0.6  +  f1_bonus * 0.4
-        Returns float in [0.0, 1.0]
-        """
         n_fixed   = sum(self.bugs_fixed.values())
         bug_score = n_fixed / self.TOTAL_BUGS
 
-        y_pred = self.model.predict(self.X_test)
+        # Always evaluate with a fresh model reflecting current fixes
+        grading_model = self._build_and_train()
+        y_pred = grading_model.predict(self.X_test)
         f1 = f1_score(self.y_test, y_pred, zero_division=0)
 
         score = (bug_score * 0.6) + (f1 * 0.4)
+        if n_fixed < self.TOTAL_BUGS:
+            score *= 0.7
         return round(min(score, 1.0), 4)
 
 
@@ -339,8 +347,8 @@ class MediumTask:
 
         # High LR simulated as early stopping / non-convergence
         if lr >= 0.5:
-            max_iter = 15    # model barely converges — simulates LR divergence
-            tol      = 0.5   # very loose tolerance — stops immediately
+            max_iter = 5    # model barely converges — simulates LR divergence
+            tol      = 1.0   # very loose tolerance — stops immediately
         else:
             max_iter = 500
             tol      = 1e-4
@@ -353,7 +361,11 @@ class MediumTask:
             random_state=42,
             solver="lbfgs"
         )
-        model.fit(self.X_train_current, self.y_train)
+        if self.bugs_fixed["class_balance"]:
+            X_fit, y_fit = balance_data(self.X_train_current, self.y_train)
+        else:
+            X_fit, y_fit = self.X_train_current, self.y_train
+        model.fit(X_fit, y_fit)
         return model
 
 
