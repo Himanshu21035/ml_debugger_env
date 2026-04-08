@@ -87,10 +87,10 @@ class EasyTask:
             reward += bonus
             result_msg += f" [+{bonus} reasoning bonus]"
 
-        # Track rewards for early termination
-        self.last_3_rewards.append(reward)
-        if len(self.last_3_rewards) > 3:
-            self.last_3_rewards.pop(0)
+        # # Track rewards for early termination
+        # self.last_3_rewards.append(reward)
+        # if len(self.last_3_rewards) > 3:
+        #     self.last_3_rewards.pop(0)
 
         # Early termination: 3 consecutive useless/bad actions
         # if self._stuck_detected():
@@ -246,7 +246,7 @@ class EasyTask:
     # ──────────────────────────────────────────────────────────────────────────
 
     def grade(self):
-    # Must have actually fixed labels AND retrained
+        # Must have actually fixed labels AND retrained
         if not (self.label_fix_applied and self.retrained_after_fix):
             return 0.0
 
@@ -295,7 +295,11 @@ class EasyTask:
             "last_action_result": last_action_result,
             "available_actions": VALID_ACTIONS,
             "done": self.done,
-            "hint": hint
+            "hint": hint if hint is not None else (
+                "Try inspecting the data — label quality may be the issue."
+                if not self.label_fix_applied else
+                "Labels fixed — retrain to see the effect."
+            )
         }
 
     def _check_reasoning_bonus(self, action):
