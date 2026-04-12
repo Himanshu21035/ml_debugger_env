@@ -23,7 +23,10 @@ REASONING_KEYWORDS = {
     "fix_learning_rate":  ["learning rate", "lr", "diverge", "unstable", "high", "converge"],
 }
 
-
+# Add this helper at the top of each task file (or in a shared utils):
+def _clamp_grade(score: float) -> float:
+    """Validator requires strictly (0, 1) — not 0.0, not 1.0."""
+    return round(max(0.001, min(score, 0.999)), 4)
 def balance_data(X, y):
     X0, X1 = X[y == 0], X[y == 1]
     if len(X0) > len(X1):
@@ -335,7 +338,7 @@ class MediumTask:
         score = (bug_score * 0.6) + (f1 * 0.4)
         if n_fixed < self.TOTAL_BUGS:
             score *= 0.7
-        return round(min(score, 1.0), 4)
+        return _clamp_grade(score)
 
 
     # ──────────────────────────────────────────────────────────────────────────

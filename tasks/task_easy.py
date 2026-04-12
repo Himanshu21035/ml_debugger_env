@@ -21,7 +21,10 @@ VALID_ACTIONS = [
 REASONING_KEYWORDS = {
     "fix_labels": ["label", "flip", "noise", "corrupt", "mislabel"],
 }
-
+# Add this helper at the top of each task file (or in a shared utils):
+def _clamp_grade(score: float) -> float:
+    """Validator requires strictly (0, 1) — not 0.0, not 1.0."""
+    return round(max(0.001, min(score, 0.999)), 4)
 
 class EasyTask:
 
@@ -275,7 +278,7 @@ class EasyTask:
         BUGGY_BASELINE = 0.55
         TARGET_ACC     = 0.90
         score = (test_acc - BUGGY_BASELINE) / (TARGET_ACC - BUGGY_BASELINE)
-        return round(min(max(score, 0.0), 1.0), 4)
+        return _clamp_grade(score)
 
 
     # ──────────────────────────────────────────────────────────────────────────

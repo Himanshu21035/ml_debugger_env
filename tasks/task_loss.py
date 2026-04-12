@@ -20,7 +20,10 @@ REASONING_KEYWORDS = {
     "fix_loss_function": ["loss", "mse", "regression", "cross", "entropy",
                           "probability", "sigmoid", "output"],
 }
-
+# Add this helper at the top of each task file (or in a shared utils):
+def _clamp_grade(score: float) -> float:
+    """Validator requires strictly (0, 1) — not 0.0, not 1.0."""
+    return round(max(0.001, min(score, 0.999)), 4)
 
 class LossTask:
 
@@ -221,7 +224,8 @@ class LossTask:
         y_pred   = self.model.predict(self.X_test)
         test_acc = accuracy_score(self.y_test, y_pred)
         score    = (test_acc - 0.55) / (0.92 - 0.55)
-        return round(min(max(score, 0.0), 1.0), 4)
+        return _clamp_grade(score)
+        # return round(max(0.0, min(score, 1.0)), 4)
 
     # ─────────────────────────────────────────────────────────────────────────
 
