@@ -25,8 +25,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from environment import MLDebuggerEnvironment
-from models import Action
-
+from models import Action, Observation, State
 
 # ══════════════════════════════════════════════════════════════════════════════
 # FIX 1: NumPy-safe JSON encoder
@@ -194,9 +193,49 @@ def state():
 @app.get("/health")
 def health():
     return safe_json({
-        "status":  "ok",
+        "status":  "healthy",
         "version": "1.0.0",
         "tasks":   ["easy", "medium", "hard", "loss"]
+    })
+@app.get("/metadata")
+def metadata():
+    return safe_json({
+        "name":        "ML Pipeline Debugger",
+        "description": (
+            "OpenEnv RL environment where an agent debugs broken ML "
+            "training pipelines. Tasks: label flip, multi-bug, "
+            "distribution shift, wrong loss function."
+        ),
+        "version":     "1.0.0",
+        "tasks":       ["easy", "medium", "hard", "loss"],
+        "max_steps":   15,
+    })
+
+
+@app.get("/schema")
+def schema():
+    return safe_json({
+        "action":      Action.model_json_schema(),
+        "observation": Observation.model_json_schema(),
+        "state":       State.model_json_schema(),
+    })
+@app.post("/mcp")
+def mcp(request: dict = None):
+    """JSON-RPC 2.0 endpoint required by OpenEnv spec."""
+    return safe_json({
+        "jsonrpc": "2.0",
+        "id":      (request or {}).get("id", 1),
+        "result":  {
+            "name":        "ML Pipeline Debugger",
+            "description": "OpenEnv RL environment for ML pipeline debugging.",
+            "version":     "1.0.0",
+            "endpoints": {
+                "reset":  "POST /reset",
+                "step":   "POST /step",
+                "state":  "GET  /state",
+                "schema": "GET  /schema",
+            }
+        }
     })
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
