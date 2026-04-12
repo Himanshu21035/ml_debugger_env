@@ -236,20 +236,22 @@ class LossTask:
         return model
 
     def _get_metrics(self):
-        train_pred = (self.model.predict(self.X_train) > 0.5).astype(int) \
-                    if not self._use_correct_loss else self.model.predict(self.X_train)
-        val_pred   = (self.model.predict(self.X_test)  > 0.5).astype(int) \
-                    if not self._use_correct_loss else self.model.predict(self.X_test)
+        raw_train = self.model.predict(self.X_train)
+        raw_val   = self.model.predict(self.X_test)
 
-        has_proba = hasattr(self.model, 'predict_proba')   # ← ADD THIS CHECK
+        # Always threshold to binary for accuracy — Ridge outputs floats
+        train_pred = (raw_train > 0.5).astype(int)
+        val_pred   = (raw_val   > 0.5).astype(int)
+
+        has_proba = hasattr(self.model, 'predict_proba')
+
         if self._use_correct_loss and has_proba:
             from sklearn.metrics import log_loss as _log_loss
             train_loss = round(_log_loss(self.y_train, self.model.predict_proba(self.X_train)), 4)
             val_loss   = round(_log_loss(self.y_test,  self.model.predict_proba(self.X_test)),  4)
         else:
-            train_loss = round(float(np.mean((self.model.predict(self.X_train) - self.y_train)**2)), 4)
-            val_loss   = round(float(np.mean((self.model.predict(self.X_test)  - self.y_test)**2)),  4)
-
+            train_loss = round(float(np.mean((raw_train - self.y_train) ** 2)), 4)
+            val_loss   = round(float(np.mean((raw_val   - self.y_test)  ** 2)), 4)
 
         return {
             "train_acc":  round(accuracy_score(self.y_train, train_pred), 4),
@@ -257,7 +259,6 @@ class LossTask:
             "train_loss": train_loss,
             "val_loss":   val_loss,
         }
-
     def _build_observation(self, last_action_result="", hint=None):
         metrics          = self._get_metrics()
         confidence_score = self._get_confidence()

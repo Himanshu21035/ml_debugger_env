@@ -363,7 +363,7 @@ class MediumTask:
         model = LogisticRegression(
             C=1.0,              # fixed regularization — LR bug is convergence, not C
             class_weight=cw,
-            max_iter=max_iter,
+            max_iter=1000,
             tol=tol,
             random_state=42,
             solver="lbfgs"
