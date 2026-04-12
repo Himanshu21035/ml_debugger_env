@@ -241,14 +241,15 @@ class LossTask:
         val_pred   = (self.model.predict(self.X_test)  > 0.5).astype(int) \
                     if not self._use_correct_loss else self.model.predict(self.X_test)
 
-        # ADD: real loss after fix, garbage before
-        if self._use_correct_loss:
+        has_proba = hasattr(self.model, 'predict_proba')   # ← ADD THIS CHECK
+        if self._use_correct_loss and has_proba:
             from sklearn.metrics import log_loss as _log_loss
             train_loss = round(_log_loss(self.y_train, self.model.predict_proba(self.X_train)), 4)
             val_loss   = round(_log_loss(self.y_test,  self.model.predict_proba(self.X_test)),  4)
         else:
             train_loss = round(float(np.mean((self.model.predict(self.X_train) - self.y_train)**2)), 4)
             val_loss   = round(float(np.mean((self.model.predict(self.X_test)  - self.y_test)**2)),  4)
+
 
         return {
             "train_acc":  round(accuracy_score(self.y_train, train_pred), 4),
@@ -280,7 +281,8 @@ class LossTask:
 
     def _get_confidence(self) -> float:
         try:
-            if self._use_correct_loss:
+            has_proba = hasattr(self.model, 'predict_proba')  # ← CHECK IF MODEL HAS PROBABILITY OUTPUT
+            if self._use_correct_loss and has_proba:
                 proba = self.model.predict_proba(self.X_test)
                 return round(float(proba.max(axis=1).mean()), 4)
             else:
