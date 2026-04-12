@@ -17,8 +17,9 @@ from models import Action
 from tasks.task_easy   import EasyTask
 from tasks.task_medium import MediumTask
 from tasks.task_hard   import HardTask
+from tasks.task_loss import LossTask
 
-VALID_TASK_IDS = ["easy", "medium", "hard"]
+VALID_TASK_IDS = ["easy", "medium", "hard", "loss"]
 MAX_STEPS      = 15   # FIX 1: defined here, not on task classes
 
 
@@ -55,6 +56,8 @@ class MLDebuggerEnvironment:
             self._task = MediumTask()
         elif task_id == "hard":
             self._task = HardTask()
+        elif task_id == "loss":
+            self._task = LossTask()
 
         self._task_id        = task_id
         self._episode_id     = str(uuid.uuid4())[:8]
@@ -130,10 +133,15 @@ class MLDebuggerEnvironment:
             "step":            self._step_count,
             "max_steps":       MAX_STEPS,                 # FIX 1: local constant
             "steps_remaining": max(0, MAX_STEPS - self._step_count),
+            "step_count": self._step_count,
+            "bugs_injected": getattr(self._task, 'TOTAL_BUGS', 1),
+            "bugs_fixed": self._get_bugs_fixed(),
             "total_reward":    round(self._total_reward, 4),
-            "current_grade":   self._task.grade() if self._task else 0.0,
+            "current_grade": getattr(self._task, '_cached_grade',
+                  self._task.grade() if self._task else 0.0),
             "elapsed_seconds": elapsed,
             "reward_history":  self._reward_history,
+            "done": self._is_done,
             "valid_task_ids":  VALID_TASK_IDS,
         }
 
@@ -147,7 +155,8 @@ class MLDebuggerEnvironment:
             "pipeline_state":     {},
             "data_summary":       {},
             "training_metrics":   {},
-            "last_action_result": message,
+            "confidence_score":   None,
+            "last_action_result": message,            
             "available_actions":  [],
             "done":               True,
             "hint":               None,
@@ -161,15 +170,32 @@ class MLDebuggerEnvironment:
         return obs
 
     def _build_info(self, task_info: Optional[dict] = None) -> dict:
-        """Merges task-specific info with episode-level info."""
+        if task_info and "grade" in task_info:
+            grade = task_info["grade"]           # ← use what task already computed
+        else:
+            grade = self._task.grade() if self._task else 0.0
+        
+        if self._task:
+            self._task._cached_grade = grade     # ← NOW actually cache it
+
         info = {
             "episode_id":    self._episode_id,
             "task_id":       self._task_id,
             "step":          self._step_count,
             "total_reward":  round(self._total_reward, 4),
-            "current_grade": self._task.grade() if self._task else 0.0,
+            "current_grade": grade,
         }
         if task_info:
             info.update(task_info)
         return info
-
+    def _get_bugs_fixed(self) -> int:
+        task = self._task
+        if hasattr(task, 'bugs_fixed'):          # MediumTask
+            return sum(task.bugs_fixed.values())
+        if hasattr(task, 'label_fix_applied'):   # EasyTask
+            return int(task.label_fix_applied and task.retrained_after_fix)
+        if hasattr(task, 'preprocessing_fixed'): # HardTask
+            return int(task.preprocessing_fixed)
+        if hasattr(task, 'loss_fix_applied'):    # LossTask
+            return int(task.loss_fix_applied)
+        return 0

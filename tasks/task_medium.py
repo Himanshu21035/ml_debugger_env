@@ -1,19 +1,6 @@
 # tasks/task_medium.py
-# Task 2 (Medium): 3 simultaneous bugs.
-# Bug 1: Class imbalance (90/10 split)
-# Bug 2: Partial bad normalization (first 5 features ×50)
-# Bug 3: Learning rate too high (1.0 instead of 0.01)
-#
-# FIXES applied vs v1:
-# - class_weight now uses LogisticRegression (actually works, unlike MLP)
-# - prev_val_acc tracked manually (was broken)
-# - inspect messages toned down (were giving away answers)
-# - retrain penalty added
-# - action validation with full allowed list
-# - normalization fix uses StandardScaler (not binary swap)
-# - LR effect amplified via SGDClassifier fallback range
 
-from xml.parsers.expat import model
+
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -24,7 +11,7 @@ from data.generators import generate_medium_task_data, get_data_summary
 
 
 VALID_ACTIONS = [
-    "inspect_data", "inspect_metrics", "inspect_config",
+    "inspect_data", "inspect_metrics", "inspect_config", "inspect_model",
     "fix_labels", "fix_normalization", "fix_learning_rate",
     "fix_architecture", "fix_loss_function", "fix_class_balance",
     "retrain", "submit_diagnosis"
@@ -90,7 +77,7 @@ class MediumTask:
         self.done         = False
         self.actions_taken = []
         self.last_3_val_accs = []
-
+        self.last_inspected=set()
         # Fit a scaler on clean data — used when agent applies fix_normalization
         self._scaler = StandardScaler()
         self._scaler.fit(self.X_train_clean)
@@ -201,6 +188,26 @@ class MediumTask:
                 reward = -0.1
                 msg = "Already inspected config. No new information."
 
+        elif at == "inspect_model":
+            if "inspect_model" not in self.last_inspected:
+                self.last_inspected.add("inspect_model")
+                reward = 0.1
+                try:
+                    proba   = self.model.predict_proba(self.X_test)
+                    conf    = proba.max(axis=1).mean()
+                    low_conf = (proba.max(axis=1) < 0.6).mean()
+                    coef_norm = float(np.linalg.norm(self.model.coef_))
+                except Exception:
+                    conf, low_conf, coef_norm = 0.0, 0.0, 0.0
+                msg = (
+                    f"Model inspection: avg_confidence={conf:.3f}, "
+                    f"low_confidence_ratio={low_conf:.3f}, "
+                    f"coef_norm={coef_norm:.3f}. "
+                    f"{'Low confidence suggests model is uncertain — root cause not fixed yet.' if conf < 0.65 else 'Confidence looks healthy.'}"
+                )
+            else:
+                reward = -0.1
+                msg = "Already inspected model. No new information."
         # ── Fix actions ───────────────────────────────────────────────────────
 
         elif at == "fix_class_balance":
@@ -417,6 +424,7 @@ class MediumTask:
             "pipeline_state":     visible_config,
             "data_summary":       data_summary,
             "training_metrics":   training_metrics,
+            "confidence_score":   self._get_confidence(),
             "last_action_result": last_action_result,
             "available_actions":  VALID_ACTIONS,
             "done":               self.done,
@@ -435,3 +443,11 @@ class MediumTask:
         if len(self.last_3_val_accs) < 3:
             return False
         return max(self.last_3_val_accs) - min(self.last_3_val_accs) < 0.01
+
+    # ADD this method to each task class:
+    def _get_confidence(self) -> float:
+        try:
+            proba = self.model.predict_proba(self.X_test)
+            return round(float(proba.max(axis=1).mean()), 4)
+        except Exception:
+            return 0.0

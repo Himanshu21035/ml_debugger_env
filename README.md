@@ -19,7 +19,7 @@ Built for the **Meta PyTorch × Scaler OpenEnv Hackathon 2026**.
 
 ## 🔗 Links & Badges
 
-[![HuggingFace Space](https://img.shields.io/badge/🤗%20HuggingFace-Space-blue)](https://huggingface.co/spaces/himanshu21034/ml-debugger-env)
+[![HuggingFace Space](https://img.shields.io/badge/🤗%20HuggingFace-Space-blue)](https://huggingface.co/spaces/himanshu21074/ml-debugger-env)
 [![OpenEnv](https://img.shields.io/badge/OpenEnv-compliant-green)](https://github.com/huggingface/openenv-core)
 [![Python](https://img.shields.io/badge/Python-3.11-blue)](https://python.org)
 
@@ -28,9 +28,10 @@ Built for the **Meta PyTorch × Scaler OpenEnv Hackathon 2026**.
 ## 🚀 Overview
 
 Modern ML pipelines often fail silently due to:
-- Mislabeled data  
-- Incorrect normalization  
-- Poor hyperparameters  
+- Mislabeled data
+- Incorrect normalization
+- Poor hyperparameters
+- Wrong loss functions
 
 This project turns ML debugging into an **RL problem**:
 > The agent observes a broken pipeline and must identify + fix the root cause.
@@ -48,11 +49,12 @@ This project turns ML debugging into an **RL problem**:
 
 ## 🧩 Tasks
 
-| Task   | Difficulty | Bug Injected | Success Criterion |
-|--------|-----------|-------------|-------------------|
-| `easy` | Easy      | 30% labels flipped | Accuracy > 85% |
-| `medium` | Medium  | Imbalance + bad normalization + LR=1.0 | Fix all within 10 steps |
-| `hard` | Hard      | Train normalized, test raw | Test accuracy > 80% |
+| Task | Difficulty | Bug Injected | Success Criterion |
+|------|-----------|-------------|-------------------|
+| `easy` | Easy | 30% labels flipped | Accuracy > 85% |
+| `medium` | Medium | Imbalance + bad normalization + LR=1.0 | Fix all 3 within 10 steps |
+| `hard` | Hard | Train normalized, test raw (distribution shift) | Test accuracy > 80% |
+| `loss` | Medium | Ridge regression used instead of LogisticRegression (MSE on classification) | Accuracy > 80% after fix |
 
 ---
 
@@ -60,11 +62,12 @@ This project turns ML debugging into an **RL problem**:
 
 Hybrid Rule-based + LLM agent (`inference.py`):
 
-| Task   | Score  | Expected | Result |
-|--------|--------|----------|--------|
-| Easy   | **0.871** | 0.75–0.85 | ✅ Exceeded |
+| Task | Score | Expected | Result |
+|------|-------|----------|--------|
+| Easy | **0.871** | 0.75–0.85 | ✅ Exceeded |
 | Medium | **0.762** | 0.45–0.60 | 🚀 +27% |
-| Hard   | **0.960** | 0.20–0.35 | 🔥 +174% |
+| Hard | **0.960** | 0.20–0.35 | 🔥 +174% |
+| Loss | **0.843** | 0.60–0.75 | ✅ Exceeded |
 
 ---
 
@@ -75,25 +78,26 @@ Runs on **FastAPI (port 7860)**
 ### ▶️ `POST /reset`
 Start a new episode.
 
-
+```json
 {
   "task_id": "easy"
 }
-
+```
 
 Response:
 
-
+```json
 {
   "episode_id": "abc12345",
   "step": 0,
-  "pipeline_state": {...},
-  "data_summary": {...},
-  "training_metrics": {...},
-  "available_actions": [...],
+  "pipeline_state": {},
+  "data_summary": {},
+  "training_metrics": {},
+  "confidence_score": 0.612,
+  "available_actions": [],
   "done": false
 }
-
+```
 
 ---
 
@@ -101,13 +105,13 @@ Response:
 
 Execute an action.
 
-
+```json
 {
   "action_type": "fix_labels",
   "parameter": null,
   "reasoning": "Label flip detected"
 }
-
+```
 
 ---
 
@@ -115,45 +119,49 @@ Execute an action.
 
 Get episode state.
 
-
+```json
 {
   "step": 4,
   "total_reward": 0.55,
-  "current_grade": 0.45
+  "current_grade": 0.45,
+  "bugs_injected": 1,
+  "bugs_fixed": 1
 }
-
+```
 
 ---
 
 ## 🎮 Action Space
 
-| Action            | Description          |
-| ----------------- | -------------------- |
-| inspect_data      | Analyze dataset      |
-| inspect_metrics   | Check performance    |
-| inspect_config    | View hyperparameters |
-| fix_labels        | Fix label errors     |
-| fix_normalization | Apply scaling        |
-| fix_learning_rate | Adjust LR            |
-| fix_architecture  | Modify model         |
-| fix_loss_function | Correct loss         |
-| fix_class_balance | Handle imbalance     |
-| retrain           | Retrain model        |
-| submit_diagnosis  | End episode          |
+| Action | Description |
+|--------|-------------|
+| `inspect_data` | Analyze dataset statistics |
+| `inspect_metrics` | Check train/val performance |
+| `inspect_config` | View hyperparameters |
+| `inspect_model` | Check model output range + confidence |
+| `fix_labels` | Fix flipped/corrupted labels |
+| `fix_normalization` | Apply correct feature scaling |
+| `fix_learning_rate` | Adjust learning rate |
+| `fix_architecture` | Modify model complexity |
+| `fix_loss_function` | Correct loss function (e.g. MSE → CrossEntropy) |
+| `fix_class_balance` | Handle class imbalance |
+| `retrain` | Retrain model with current config |
+| `submit_diagnosis` | Declare root cause and end episode |
 
 ---
 
 ## 💰 Reward Function
 
-| Event                       | Reward         |
-| --------------------------- | -------------- |
-| New insight from inspection | +0.10          |
-| Correct fix                 | +0.20 to +0.25 |
-| Improved retraining         | +0.30          |
-| Final success               | +0.50          |
-| No-op action                | −0.10          |
-| Worse performance           | −0.20          |
-| Step penalty                | −0.05          |
+| Event | Reward |
+|-------|--------|
+| New insight from inspection | +0.10 |
+| Correct fix applied | +0.20 |
+| Improved retraining | +0.30 |
+| Final success (grade > 0.8) | +0.50 |
+| Correct reasoning bonus | +0.05 |
+| Repeated/no-op action | −0.10 |
+| Wrong fix applied | −0.20 |
+| Step penalty | −0.05 |
 
 ---
 
@@ -169,13 +177,17 @@ python app.py
 Run agent:
 
 ```bash
-HF_TOKEN=your_token python inference.py
+export API_KEY=your_key
+export API_BASE_URL=https://router.huggingface.co/v1
+python inference.py
 ```
 
 Windows PowerShell:
 
 ```powershell
-$env:HF_TOKEN="your_token"; python inference.py
+$env:API_KEY="your_key"
+$env:API_BASE_URL="https://router.huggingface.co/v1"
+python inference.py
 ```
 
 ---
@@ -193,37 +205,44 @@ docker run -p 7860:7860 ml-debugger-env
 
 ```bash
 pip install openenv-core
-./validate-submission.sh http://localhost:7860 .
+openenv validate http://localhost:7860
 ```
 
 ---
 
 ## 📁 Project Structure
 
+
 ```
 ml_debugger_env/
-├── models.py
-├── environment.py
-├── app.py
-├── inference.py
-├── server/
+├── models.py # Pydantic: Action, Observation, Reward, State
+├── environment.py # Core logic: reset(), step(), state()
+├── app.py # FastAPI server
+├── inference.py # Hybrid LLM + rule-based agent
+├── client.py # HTTP client for the environment
 ├── tasks/
+│ ├── task_easy.py # Single label-flip bug
+│ ├── task_medium.py # 3 simultaneous bugs
+│ ├── task_hard.py # Silent distribution shift (PyTorch)
+│ └── task_loss.py # Wrong loss function (Ridge → LogisticRegression)
 ├── data/
-├── openenv.yaml
-├── pyproject.toml
+│ └── generators.py # Seeded synthetic dataset generators
+├── openenv.yaml # OpenEnv metadata
 ├── Dockerfile
 └── requirements.txt
+
+text
 ```
 
 ---
 
 ## ⚙️ Technical Details
 
-* **Datasets**: Synthetic (seed=42)
-* **Training**: scikit-learn (CPU only)
-* **Max Steps**: 15
-* **Server**: FastAPI + Uvicorn
-* **Python**: 3.11
+- **Datasets**: Synthetic (seed=42), fully deterministic
+- **Training**: scikit-learn + PyTorch (CPU only)
+- **Max Steps**: 15 per episode
+- **Server**: FastAPI + Uvicorn, port 7860
+- **Python**: 3.11
 
 ---
 
@@ -235,29 +254,30 @@ Inspired by **DeepFix (2026)**:
 
 This environment enables:
 
-* Autonomous debugging agents
-* Self-healing ML systems
-* RL-based reasoning over pipelines
+- Autonomous debugging agents
+- Self-healing ML systems
+- RL-based reasoning over pipelines
 
 ---
 
 ## ✅ Submission Checklist
 
-* [x] Environment logic
-* [x] Tasks (easy/medium/hard)
-* [x] Baseline agent
-* [x] OpenEnv config
-* [x] Docker support
-* [x] Validation passing (3/3)
+- [x] Environment logic (4 tasks)
+- [x] Tasks: easy / medium / hard / loss
+- [x] `inspect_model` action + `confidence_score` signal
+- [x] Baseline hybrid agent (LLM + rule-based)
+- [x] OpenEnv spec compliance (`models.py` inherits base types)
+- [x] Docker support
+- [x] OpenEnv validation passing (3/3)
 
 ---
 
 ## ⭐ Future Work
 
-* Add real-world datasets
-* Multi-step reasoning benchmarks
-* Vision + NLP pipelines
-* Multi-agent debugging
+- Add real-world datasets (UCI, Kaggle)
+- Multi-step reasoning benchmarks
+- Vision + NLP pipeline debugging
+- Multi-agent collaborative debugging
 
 ---
 

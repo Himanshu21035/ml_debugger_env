@@ -13,8 +13,8 @@ import os
 import sys
 import textwrap
 from typing import List, Optional, Set
+from client import MLDebuggerClient
 
-import requests
 from openai import OpenAI
 import time
 
@@ -25,8 +25,7 @@ import time
 
 # FIX 2: real HuggingFace inference router endpoint + model
 API_BASE_URL = os.environ.get(
-    "API_BASE_URL",
-    "https://router.huggingface.co/v1"
+    "API_BASE_URL"
 )
 MODEL_NAME = os.getenv(
     "MODEL_NAME",
@@ -41,13 +40,14 @@ TEMPERATURE      = 0.2
 MAX_TOKENS       = 300
 SUCCESS_THRESHOLD = 0.7
 
+env=MLDebuggerClient(ENV_URL)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # MANDATORY LOG FUNCTIONS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def log_start(task: str, env: str, model: str) -> None:
-    print(f"[START] task={task} env={env} model={model}", flush=True)
+def log_start(task: str, env_name: str, model: str) -> None:
+    print(f"[START] task={task} env={env_name} model={model}", flush=True)
 
 def log_step(step: int, action: str, reward: float,
              done: bool, error: Optional[str]) -> None:
@@ -75,10 +75,7 @@ def log_end(success: bool, steps: int, score: float,
 def env_reset(task_id: str, retries: int = 3) -> dict:
     for attempt in range(retries):
         try:
-            r = requests.post(f"{ENV_URL}/reset",
-                              json={"task_id": task_id}, timeout=60)
-            r.raise_for_status()
-            return r.json()
+            return env.reset(task_id=task_id)
         except Exception as e:
             if attempt < retries - 1:
                 print(f"[DEBUG] Reset failed (attempt {attempt+1}), retrying...", flush=True)
@@ -88,18 +85,10 @@ def env_reset(task_id: str, retries: int = 3) -> dict:
 def env_step(action_type: str,
              parameter: Optional[str] = None,
              reasoning: Optional[str] = None) -> dict:
-    r = requests.post(f"{ENV_URL}/step", json={
-        "action_type": action_type,
-        "parameter":   parameter,
-        "reasoning":   reasoning,
-    }, timeout=60)
-    r.raise_for_status()
-    return r.json()
+    return env.step(action_type=action_type, parameter=parameter, reasoning=reasoning)
 
 def env_state() -> dict:
-    r = requests.get(f"{ENV_URL}/state", timeout=30)
-    r.raise_for_status()
-    return r.json()
+    return env.state()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -151,7 +140,17 @@ def choose_action_rule_based(obs, step, used_actions, current_grade):
         if "retrain" not in used_actions:
             return {"action_type": "retrain",
                     "reasoning": "normalization fix applied — retrain to validate"}
-
+    # In choose_action_rule_based(), ADD after the hard block:
+    elif task == "loss":
+        if "inspect_model" not in used_actions:
+            return {"action_type": "inspect_model",
+                    "reasoning": "check model output range — may be regression not classifier"}
+        if "fix_loss_function" not in used_actions:
+            return {"action_type": "fix_loss_function",
+                    "reasoning": "model outputs floats not probs — MSE loss on classification bug"}
+        if "retrain" not in used_actions:
+            return {"action_type": "retrain",
+                    "reasoning": "loss function fixed — retrain to validate"}
     # Phase 3: FIX 4 — use grade from obs, no extra HTTP call
     if current_grade >= SUCCESS_THRESHOLD:
         # FIX 3: hard task submit_diagnosis must include "distribution shift"
@@ -171,33 +170,39 @@ def choose_action_rule_based(obs, step, used_actions, current_grade):
     return {"action_type": "submit_diagnosis", "reasoning": reasoning}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# LLM FALLBACK AGENT
-# ══════════════════════════════════════════════════════════════════════════════
 
 SYSTEM_PROMPT = textwrap.dedent("""
-    You are an expert ML debugging agent. You interact with a broken ML training
-    pipeline and must identify and fix the root cause of poor model performance.
+    You are an ML debugging agent. You interact with a broken ML training pipeline
+and must identify and fix the root cause of poor model performance.
 
-    AVAILABLE ACTIONS:
-      inspect_data, inspect_metrics, inspect_config,
-      fix_labels, fix_normalization, fix_learning_rate,
-      fix_architecture, fix_loss_function, fix_class_balance,
-      retrain, submit_diagnosis
+You will receive an Observation (JSON) and must return ONE action as JSON.
 
-    STRATEGY:
-      1. Inspect before fixing
-      2. Identify root cause from signals
-      3. Apply correct fix
-      4. Retrain to validate
-      5. Submit when confident
+## Tasks
+- easy:   Single label-flip bug. Hint is provided.
+- medium: 3 bugs injected simultaneously (normalization + learning rate + class imbalance).
+- hard:   Silent distribution shift — train is normalized, test is raw.
+- loss:   Wrong loss function — Ridge regression used for classification instead of
+          LogisticRegression. Model trains without errors but outputs raw floats,
+          not probabilities. confidence_score will be garbage (values near 0.5 randomly).
 
-    RESPONSE FORMAT — valid JSON only, no extra text:
-    {
-        "action_type": "<one of the actions above>",
-        "parameter": "<value or null>",
-        "reasoning": "<one sentence>"
-    }
+## Key Signals per Task
+- loss task: confidence_score is unreliable, raw model outputs outside [0,1],
+             pipeline_state shows model_type=ridge_regression or loss_function=mse.
+             Fix: call fix_loss_function, then retrain.
+
+## Action format (return ONLY valid JSON, no markdown):
+{
+  "action_type": "...",
+  "parameter": "...",   // optional
+  "reasoning": "..."    // explain your thinking
+}
+
+## Strategy
+1. Always inspect first before fixing (inspect_data, inspect_metrics, inspect_config, inspect_model).
+2. Use confidence_score — low/garbage confidence = model output is broken.
+3. Match fix to root cause. Wrong fixes give -0.2 reward.
+4. Call retrain after every fix to validate.
+5. Call submit_diagnosis only when confident. Wrong diagnosis gives -0.5 reward, so be sure!
 """).strip()
 
 def get_llm_action(client: OpenAI, step: int,
@@ -209,20 +214,58 @@ def get_llm_action(client: OpenAI, step: int,
         "pipeline_state":     obs.get("pipeline_state"),
         "data_summary":       obs.get("data_summary"),
         "training_metrics":   obs.get("training_metrics"),
+        "confidence_score":   obs.get("confidence_score"),   # ← was missing
+        "available_actions":  obs.get("available_actions"),  # ← was missing
         "last_action_result": obs.get("last_action_result"),
         "hint":               obs.get("hint"),
     }
+    task_id       = obs.get("task_id", "")
+    conf          = obs.get("confidence_score")
+    metrics       = obs.get("training_metrics", {})
+    pipeline      = obs.get("pipeline_state", {})
+
+    # Build diagnostic hints so LLM doesn't have to infer from raw numbers alone
+    hints = []
+    if conf is not None and conf < 0.60:
+        hints.append(f"⚠ confidence_score={conf} is dangerously low — model is uncertain on test data.")
+    if task_id == "loss" and pipeline.get("loss_function") == "mse":
+        hints.append("⚠ loss_function=mse on a classification task — this is the root cause.")
+    if task_id == "hard":
+        train_m = obs.get("data_summary", {}).get("train_mean_sample", [])
+        test_m  = obs.get("data_summary", {}).get("test_mean_sample", [])
+        if train_m and test_m:
+            diff = abs(sum(train_m)/len(train_m) - sum(test_m)/len(test_m))
+            if diff > 1.0:
+                hints.append(f"⚠ Train mean ≈ {train_m} vs Test mean ≈ {test_m} — large gap = distribution shift.")
+    train_acc = metrics.get("train_acc", 0)
+    test_acc  = metrics.get("test_acc",  0) or metrics.get("val_acc", 0)
+    if train_acc and test_acc and (train_acc - test_acc) > 0.2:
+        hints.append(f"⚠ train_acc={train_acc} vs test_acc={test_acc} — large gap = preprocessing mismatch.")
+
+    hint_block = "\n".join(hints) if hints else "No anomalies auto-detected — inspect carefully."
+
     user_prompt = textwrap.dedent(f"""
-        Step: {step}
-        Already used actions: {sorted(used_actions)}
+    ## Observation (Step {step}/15)
 
-        Current observation:
-        {json.dumps(obs_summary, indent=2)}
+    ```json
+    {json.dumps(obs_summary, indent=2)}
+    ```
 
-        Recent history:
-        {chr(10).join(history[-4:]) if history else "None"}
+    ## Auto-Detected Signals
+    {hint_block}
 
-        What is your next action? Respond with JSON only.
+    ## Actions Already Used
+    {sorted(used_actions)}
+
+    ## Recent History (last 5 steps)
+    {chr(10).join(history[-5:]) if history else "None"}
+
+    ## Rules
+    - Do NOT repeat actions already used (unless it's retrain after a new fix).
+    - inspect_model gives new signal on model output range and weight norm.
+    - For task=loss: inspect_model first, then fix_loss_function, then retrain.
+    - For task=hard: submit_diagnosis MUST include "distribution shift" and "normalization" in reasoning.
+    - Return ONLY valid JSON. No markdown, no explanation outside the JSON.
     """).strip()
 
     try:
@@ -265,7 +308,7 @@ def get_llm_action(client: OpenAI, step: int,
 # ══════════════════════════════════════════════════════════════════════════════
 def sanitize_action(action: dict) -> dict:
     allowed = {
-        "inspect_data", "inspect_metrics", "inspect_config",
+        "inspect_data", "inspect_metrics", "inspect_config", "inspect_model",
         "fix_labels", "fix_normalization", "fix_learning_rate",
         "fix_architecture", "fix_loss_function", "fix_class_balance",
         "retrain", "submit_diagnosis"
@@ -298,7 +341,7 @@ def run_episode(client: OpenAI, task_id: str) -> None:
     success:      bool        = False
     last_retrain_step = 0        # ← ADD HERE (top of function)
 
-    log_start(task=task_id, env=BENCHMARK, model=MODEL_NAME)
+    log_start(task=task_id, env_name=BENCHMARK, model=MODEL_NAME)
 
     try:
         obs           = env_reset(task_id)
@@ -312,8 +355,9 @@ def run_episode(client: OpenAI, task_id: str) -> None:
             action = get_llm_action(client, step, obs, history, used_actions)
             rule_override = choose_action_rule_based(obs, step, used_actions, current_grade)
             task_id = obs.get("task_id", "easy")  
+            obs_task_id=obs.get("task_id", task_id)
             easy_incomplete = (                          # ← ADD BLOCK 1
-                task_id == "easy" and
+                obs_task_id == "easy" and
                 action["action_type"] not in ["fix_labels", "retrain", "submit_diagnosis"] and
                 "fix_labels" not in used_actions
             )
@@ -326,16 +370,21 @@ def run_episode(client: OpenAI, task_id: str) -> None:
                 and last_retrain_step < step - 1
             )
             medium_incomplete = (
-                task_id == "medium" and
+                obs_task_id == "medium" and
                 action["action_type"] == "submit_diagnosis" and
                 (not all(f in used_actions for f in [
                     "fix_class_balance", "fix_normalization", "fix_learning_rate"
                 ]) or fixes_after_retrain)
             )
             hard_needs_inspect = (                       # ← ADD BLOCK 2
-                task_id == "hard" and
+                obs_task_id == "hard" and
                 action["action_type"] == "submit_diagnosis" and
                 not ("inspect_metrics" in used_actions and "inspect_data" in used_actions)
+            )
+            loss_incomplete = (
+                obs_task_id == "loss" and
+                action["action_type"] == "submit_diagnosis" and
+                not all(f in used_actions for f in ["fix_loss_function", "retrain"])
             )
             if (
                 (action["action_type"] in used_actions
@@ -343,6 +392,7 @@ def run_episode(client: OpenAI, task_id: str) -> None:
                 or medium_incomplete
                 or hard_needs_inspect
                 or easy_incomplete
+                or loss_incomplete
             ) and rule_override:
                 action = rule_override
                 print(f"[DEBUG] Step {step}: Rule override → {action['action_type']}", flush=True)
@@ -364,7 +414,8 @@ def run_episode(client: OpenAI, task_id: str) -> None:
             if action_type == "retrain":      # ← ADD HERE (after env_step)
                 last_retrain_step = step
 
-            current_grade = float(result.get("info", {}).get("grade", 0.0))
+            current_grade = float(result.get("info", {}).get("current_grade",
+                result.get("info", {}).get("grade", 0.0)))
             
 
             rewards.append(reward)
@@ -401,17 +452,17 @@ def run_episode(client: OpenAI, task_id: str) -> None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def main():
-    if not API_KEY:
-        print(
-            "[ERROR] API_KEY not set. Export it: export API_KEY=hf_xxxx",
-            flush=True,
-        )
+    try:
+        API_KEY      = os.environ["API_KEY"]
+        API_BASE_URL = os.environ["API_BASE_URL"]
+    except KeyError as e:
+        print(f"[ERROR] Missing required env var: {e}", flush=True)
         sys.exit(1)
 
     # FIX 1: api_key=HF_TOKEN not HF_TOKEN=HF_TOKEN
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
 
-    for task_id in ["easy", "medium", "hard"]:
+    for task_id in ["easy", "medium", "hard", "loss"]:
         print(f"\n{'='*60}", flush=True)
         print(f"Running task: {task_id}", flush=True)
         print(f"{'='*60}", flush=True)

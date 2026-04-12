@@ -94,7 +94,7 @@ app = FastAPI(
     title       = "ML Debugger Environment",
     description = (
         "OpenEnv-compliant RL environment. Agent debugs broken ML pipelines. "
-        "Tasks: Easy (label flip), Medium (3 bugs), Hard (distribution shift)."
+        "Tasks: Easy (label flip), Medium (3 bugs), Hard (distribution shift), Loss (wrong loss function)."
     ),
     version     = "1.0.0",
     lifespan    = lifespan,   # FIX 2: modern pattern
@@ -122,7 +122,7 @@ def root():
         "status":      "running",
         "environment": "ML Debugger",
         "version":     "1.0.0",
-        "tasks":       ["easy", "medium", "hard"],
+        "tasks":       ["easy", "medium", "hard", "loss"],
         "endpoints": {
             "reset": "POST /reset  — body: {task_id: easy|medium|hard}",
             "step":  "POST /step   — body: {action_type, parameter, reasoning}",
@@ -148,7 +148,7 @@ def reset(request: ResetRequest = None):
     except ValueError as e:
         raise HTTPException(
             status_code=400,
-            detail={"error": str(e), "valid_task_ids": ["easy", "medium", "hard"]},
+            detail={"error": str(e), "valid_task_ids": ["easy", "medium", "hard", "loss"]},
         )
     except Exception as e:
         traceback.print_exc()
@@ -191,8 +191,13 @@ def state():
     except Exception as e:
         traceback.print_exc()
         raise HTTPException(status_code=500, detail={"error": str(e)})
-
-
+@app.get("/health")
+def health():
+    return safe_json({
+        "status":  "ok",
+        "version": "1.0.0",
+        "tasks":   ["easy", "medium", "hard", "loss"]
+    })
 # ══════════════════════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ══════════════════════════════════════════════════════════════════════════════

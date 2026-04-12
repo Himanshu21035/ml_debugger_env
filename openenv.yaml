@@ -10,6 +10,14 @@ entry_point:
   type: http
   port: 7860
 
+author: himanshu21034
+
+tags:
+  - ml-debugging
+  - reinforcement-learning
+  - pytorch
+  - sklearn
+  
 endpoints:
   reset:
     method: POST

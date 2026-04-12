@@ -1,5 +1,6 @@
 # # tasks/task_hard.py
 
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -109,7 +110,7 @@ class TaskHard:
         self.train_mean  = data["train_mean"]
         self.train_std   = data["train_std"]
         self.input_dim   = self.X_train.shape[1]
-
+        self.last_inspected = set()  # track which inspect_* actions were called
         # FIX 4: agent must retrain AFTER fixing preprocessing to get credit
         self._inspected_metrics  = False  # must inspect metrics before diagnosis counts
         self._inspected_data     = False  # must inspect data before diagnosis counts
@@ -263,24 +264,26 @@ class TaskHard:
 
     # ── Helper ────────────────────────────────────────────────────────────────
 
-    def _obs(self, step: int, result: str) -> dict:
+    def _obs(self, step: int, result: str, done:bool=False) -> dict:
         return {
             "step":               step,
             "task_id":            "hard",
             "pipeline_state":     self.pipeline_state.copy(),
             "data_summary":       self.data_summary.copy(),
             "training_metrics":   self.training_metrics.copy(),
+            "confidence_score":   self._get_confidence(),   # ← ADD THIS LINE
             "last_action_result": result,
             "available_actions":  [
                 "inspect_data", "inspect_metrics", "inspect_config",
+                "inspect_model",                             # ← ADD THIS TOO
                 "submit_diagnosis", "fix_normalization", "retrain",
             ],
-            "done": False,
+            "done": done,
             "hint": None,
         }
     _WRONG = {"fix_labels","fix_learning_rate","fix_class_balance",
                "fix_architecture","fix_loss_function"}
-    _VALID = {"inspect_data","inspect_metrics","inspect_config",
+    _VALID = {"inspect_data","inspect_metrics","inspect_config", "inspect_model", "inspect_model", 
                "submit_diagnosis","fix_normalization","retrain"}
 
     def step(self, action):
@@ -288,27 +291,55 @@ class TaskHard:
         parameter = getattr(action, "parameter",   None) or ""
         reasoning = getattr(action, "reasoning",   None) or ""
         self._step_num = getattr(self, "_step_num", 0) + 1
+        done = False
+        reward= -0.05
         if self._step_num > 15:                           
             return self._obs(self._step_num,              
                 "Max steps reached."), 0.0, True, self._info()  
         if atype in self._WRONG:
             result = f"'{atype}' not relevant here. Focus on preprocessing."
-            return self._obs(self._step_num, result), -0.2, False, self._info()
+            return self._obs(self._step_num, result), -0.2, done, self._info()
         if atype not in self._VALID:
             result = f"Unknown action: '{atype}'. Available: {sorted(self._VALID)}"
-            return self._obs(self._step_num, result), -0.1, False, self._info()
+            return self._obs(self._step_num, result), -0.1, done, self._info()
 
-        done = False
         if   atype == "inspect_data":      result, reward = self.inspect_data()
         elif atype == "inspect_metrics":   result, reward = self.inspect_metrics()
         elif atype == "inspect_config":    result, reward = self.inspect_config()
+        elif atype == "inspect_model":     result, reward = self.inspect_model()
         elif atype == "fix_normalization": result, reward = self.fix_normalization()
         elif atype == "retrain":           result, reward = self.retrain()
         elif atype == "submit_diagnosis":
             result, reward = self.submit_diagnosis(parameter=parameter, reasoning=reasoning)
             done = True
         return self._obs(self._step_num, result), reward, done, self._info()
-
+    def inspect_model(self, **_):
+        if "inspect_model" not in self.last_inspected:
+            self.last_inspected.add("inspect_model")
+            reward = 0.1
+            try:
+                import torch
+                self.model.eval()
+                with torch.no_grad():
+                    X_tensor = torch.tensor(self.X_test_current, dtype=torch.float32) 
+                    proba    = self.model(X_tensor).numpy().flatten()
+                conf      = float(np.maximum(proba, 1 - proba).mean())
+                low_conf  = float((np.maximum(proba, 1 - proba) < 0.6).mean())
+                # Weight norm from first linear layer
+                first_layer = list(self.model.parameters())[0]
+                coef_norm = float(torch.norm(first_layer).item())
+            except Exception:
+                conf, low_conf, coef_norm = 0.0, 0.0, 0.0
+            msg = (
+                f"Model inspection: avg_confidence={conf:.3f}, "
+                f"low_confidence_ratio={low_conf:.3f}, "
+                f"weight_norm={coef_norm:.3f}. "
+                f"{'Low confidence — model likely seeing shifted distribution at test time.' if conf < 0.65 else 'Confidence looks healthy.'}"
+            )
+        else:
+            reward = -0.1
+            msg = "Already inspected model. No new information."
+        return msg, reward 
     def _info(self):
         return {"shift_detected": self.shift_detected,
                 "fix_applied": self.preprocessing_fixed, "grade": self.grade()}
@@ -317,6 +348,18 @@ class TaskHard:
         return {"train_acc": round(self.train_acc, 4),
                 "val_acc": self.training_metrics.get("val_acc") or 0.0,
                 "test_acc": round(self.test_acc_after_fix or self.test_acc_raw, 4)}
+
+    def _get_confidence(self) -> float:
+        try:
+            import torch
+            self.model.eval()
+            with torch.no_grad():
+                X_tensor = torch.tensor(self.X_test_current, dtype=torch.float32) 
+                proba    = self.model(X_tensor).numpy().flatten()
+            confidence = float(np.maximum(proba, 1 - proba).mean())
+            return round(confidence, 4)
+        except Exception:
+            return 0.0
 
     @property
     def fix_applied(self): return self.preprocessing_fixed

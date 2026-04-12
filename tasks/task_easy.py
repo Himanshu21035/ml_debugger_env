@@ -11,10 +11,10 @@ from data.generators import generate_easy_task_data, get_data_summary
 
 
 VALID_ACTIONS = [
-    "inspect_data", "inspect_metrics", "inspect_config",
+    "inspect_data", "inspect_metrics", "inspect_config", "inspect_model",
     "fix_labels", "fix_normalization", "fix_learning_rate",
     "fix_architecture", "fix_loss_function", "fix_class_balance",
-    "retrain", "submit_diagnosis"
+    "retrain", "submit_diagnosis", 
 ]
 
 # Reasoning bonus keywords for correct diagnosis
@@ -168,7 +168,27 @@ class EasyTask:
             else:
                 reward = -0.1
                 msg = "Already inspected config. No new information gained."
-
+        
+        elif at == "inspect_model":
+            if "inspect_model" not in self.last_inspected:
+                self.last_inspected.add("inspect_model")
+                reward = 0.1
+                try:
+                    proba   = self.model.predict_proba(self.X_test)
+                    conf    = proba.max(axis=1).mean()
+                    low_conf = (proba.max(axis=1) < 0.6).mean()
+                    coef_norm = float(np.linalg.norm(self.model.coef_))
+                except Exception:
+                    conf, low_conf, coef_norm = 0.0, 0.0, 0.0
+                msg = (
+                    f"Model inspection: avg_confidence={conf:.3f}, "
+                    f"low_confidence_ratio={low_conf:.3f}, "
+                    f"coef_norm={coef_norm:.3f}. "
+                    f"{'Low confidence suggests model is uncertain — root cause not fixed yet.' if conf < 0.65 else 'Confidence looks healthy.'}"
+                )
+            else:
+                reward = -0.1
+                msg = "Already inspected model. No new information."
         # ── Fix actions ──────────────────────────────────────────────────────
 
         elif at == "fix_labels":
@@ -292,6 +312,7 @@ class EasyTask:
             "pipeline_state": self.pipeline_state,
             "data_summary": get_data_summary(self.X_train, self.y_train_current),
             "training_metrics": metrics,
+            "confidence_score":   self._get_confidence(),
             "last_action_result": last_action_result,
             "available_actions": VALID_ACTIONS,
             "done": self.done,
@@ -316,3 +337,10 @@ class EasyTask:
     #     if len(self.last_3_rewards) < 3:
     #         return False
     #     return all(r < 0 for r in self.last_3_rewards)
+    # ADD this method to each task class:
+    def _get_confidence(self) -> float:
+        try:
+            proba = self.model.predict_proba(self.X_test)
+            return round(float(proba.max(axis=1).mean()), 4)
+        except Exception:
+            return 0.0
