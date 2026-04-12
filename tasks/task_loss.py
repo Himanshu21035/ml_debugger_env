@@ -176,11 +176,16 @@ class LossTask:
             if self.loss_fix_applied:
                 self.retrained_after_fix = True
             m = self._get_metrics()
-            if m["val_acc"] > 0.80:
+            if m["val_acc"] > 0.80 and self.loss_fix_applied:
                 reward    = 0.5
                 self.done = True
                 msg = (f"Retrain complete. val_acc={m['val_acc']:.3f}. "
                        f"SUCCESS — model now outputs valid probabilities!")
+            elif m["val_acc"] > 0.80 and not self.loss_fix_applied:
+                reward = -0.1                                    # ← penalise, don't end episode
+                msg = (f"Retrain complete. val_acc={m['val_acc']:.3f}. "
+                    f"Accuracy looks OK but loss function is still wrong — "
+                    f"check model output range with inspect_model.")
             elif m["val_acc"] > 0.65:
                 reward = 0.3
                 msg    = f"Retrain. val_acc={m['val_acc']:.3f}. Improvement detected."

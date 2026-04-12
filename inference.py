@@ -134,6 +134,9 @@ def choose_action_rule_based(obs, step, used_actions, current_grade):
                     "reasoning": "all 3 fixes applied — retrain to evaluate"}
 
     elif task == "hard":
+        if "inspect_metrics" not in used_actions:      # ← ADD THIS FIRST
+            return {"action_type": "inspect_metrics",
+                    "reasoning": "check train vs test accuracy gap before fixing"}
         if "fix_normalization" not in used_actions:
             return {"action_type": "fix_normalization",
                     "reasoning": "distribution shift — normalise test set with train stats"}
